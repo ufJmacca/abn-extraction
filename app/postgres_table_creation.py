@@ -61,7 +61,7 @@ class GST(Base):
     status: Mapped[str] = mapped_column(String)
     status_from_date: Mapped[Date] = mapped_column(Date)
 
-    abn: Mapped["ABN"] = relationship(back_populates="asic_number")
+    abn: Mapped["ABN"] = relationship(back_populates="gst")
 
 class DGR(Base):
     __tablename__ = 'dgr'
