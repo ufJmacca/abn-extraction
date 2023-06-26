@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import String, Integer, ForeignKey, Date, create_engine
+from sqlalchemy import String, Integer, BigInteger, ForeignKey, Date, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
@@ -8,7 +8,7 @@ class Base(DeclarativeBase):
 class ABN(Base):
     __tablename__ = 'abn'
 
-    abn: Mapped[int] = mapped_column(Integer, primary_key=True)
+    abn: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     abn_status: Mapped[str] = mapped_column(String(3))
     abn_status_from_date: Mapped[Date] = mapped_column(Date)
 
@@ -26,7 +26,7 @@ class ABN(Base):
 class MainEntity(Base):
     __tablename__ = 'main_entity'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True)
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
     main_entity_type: Mapped[str] = mapped_column(String[3])
     main_entity_name: Mapped[str] = mapped_column(String)
     address_state: Mapped[str] = mapped_column(String)
@@ -37,7 +37,7 @@ class MainEntity(Base):
 class LegalEntity(Base):
     __tablename__ = 'legal_entity'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True)
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
     legal_entity_type: Mapped[str] = mapped_column(String[3])
     legal_entity_name: Mapped[str] = mapped_column(String)
     address_state: Mapped[str] = mapped_column(String)
@@ -48,7 +48,7 @@ class LegalEntity(Base):
 class ASICNumber(Base):
     __tablename__ = 'asic_number'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True)
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
     asic_number: Mapped[str] = mapped_column(String)
     asic_type: Mapped[str] = mapped_column(String)
 
@@ -57,7 +57,7 @@ class ASICNumber(Base):
 class GST(Base):
     __tablename__ = 'gst'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True, )
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True, )
     status: Mapped[str] = mapped_column(String)
     status_from_date: Mapped[Date] = mapped_column(Date)
 
@@ -66,7 +66,7 @@ class GST(Base):
 class DGR(Base):
     __tablename__ = 'dgr'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True)
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
     status_from_date: Mapped[Date] = mapped_column(Date)
     name: Mapped[str] = mapped_column(String, primary_key=True)
 
@@ -75,8 +75,8 @@ class DGR(Base):
 class OtherEntity(Base):
     __tablename__ = 'other_entity'
 
-    abn_id: Mapped[int] = mapped_column(Integer, ForeignKey("abn.abn"), primary_key=True)
-    other_entity_type: Mapped[str] = mapped_column(String[3])
+    abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
+    other_entity_type: Mapped[str] = mapped_column(String[3], primary_key=True)
     other_entity_name: Mapped[str] = mapped_column(String, primary_key=True)
 
     abn: Mapped["ABN"] = relationship(back_populates="other_entity")

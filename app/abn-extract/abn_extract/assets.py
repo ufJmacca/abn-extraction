@@ -1,11 +1,14 @@
 import requests
 import os
 import zipfile
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from bs4 import BeautifulSoup
 from dagster import op
 from typing import List
 from datetime import datetime
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
 
 # Import postgres_table_creation to leverage classes
 import importlib.util
@@ -99,55 +102,112 @@ def download_files(file_urls: List[str]) -> None:
 
 def add_record_to_db(xml: str) -> None:
     soup = BeautifulSoup(xml, 'xml')
-    print(soup.find_all('DGR'))
+    print(soup.ABR.OtherEntity)
 
-    abn = postgres_table_creation.ABN(
-        abn = int(soup.ABR.ABN.text),
-        abn_status = soup.ABR.ABN['status'],
-        abn_status_from_date = datetime.strptime(soup.ABR.ABN['ABNStatusFromDate'], '%Y%m%d').date(),
-        entity_type_indicator = soup.ABR.EntityType.EntityTypeInd.text,
-        entity_type_text = soup.ABR.EntityType.EntityTypeText.text
-    )
+    engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
 
-    if soup.ABR.MainEntity:
-        main_enity = postgres_table_creation.MainEntity(
-            abn_id = int(soup.ABR.ABN.text),
-            main_entity_type = soup.ABR.MainEntity.NonIndividualName['type'],
-            main_entity_name = soup.ABR.MainEntity.NonIndividualName.text,
-            address_state = soup.ABR.MainEntity.BusinessAddress.AddressDetails.State.text,
-            address_postcode = int(soup.ABR.MainEntity.BusinessAddress.AddressDetails.Postcode.text)
+    with Session(engine) as session:
+
+        abn = postgres_table_creation.ABN(
+            abn = int(soup.ABR.ABN.text),
+            abn_status = soup.ABR.ABN['status'],
+            abn_status_from_date = datetime.strptime(soup.ABR.ABN['ABNStatusFromDate'], '%Y%m%d').date(),
+            entity_type_indicator = soup.ABR.EntityType.EntityTypeInd.text,
+            entity_type_text = soup.ABR.EntityType.EntityTypeText.text
         )
+        session.add_all([abn])
 
-    if soup.ABR.LegalEntity:
-        legal_entity = postgres_table_creation.LegalEntity(
-            abn_id = int(soup.ABR.ABN.text),
-            legal_entity_type = soup.ABR.LegalEntity.IndividualName['type'],
-            legal_entity_name = soup.ABR.LegalEntity.IndividualName.GivenName.text + ' ' + soup.ABR.LegalEntity.IndividualName.FamilyName.text,
-            address_state = soup.ABR.LegalEntity.BusinessAddress.AddressDetails.State.text,
-            address_postcode = int(soup.ABR.LegalEntity.BusinessAddress.AddressDetails.Postcode.text)
-        )
+        if soup.ABR.MainEntity:
+            main_enity = postgres_table_creation.MainEntity(
+                abn_id = int(soup.ABR.ABN.text),
+                main_entity_type = soup.ABR.MainEntity.NonIndividualName['type'],
+                main_entity_name = soup.ABR.MainEntity.NonIndividualName.text,
+                address_state = soup.ABR.MainEntity.BusinessAddress.AddressDetails.State.text,
+                address_postcode = int(soup.ABR.MainEntity.BusinessAddress.AddressDetails.Postcode.text)
+            )
+        session.add_all([main_enity])
 
-    if soup.ABR.ASICNumber:
-        asic_number = postgres_table_creation.ASICNumber(
-            abn_id = int(soup.ABR.ABN.text),
-            asic_number = soup.ABR.ASICNumber.text,
-            asic_type = soup.ABR.ASICNumber['ASICNumberType']
-        )
+        if soup.ABR.LegalEntity:
+            legal_entity = postgres_table_creation.LegalEntity(
+                abn_id = int(soup.ABR.ABN.text),
+                legal_entity_type = soup.ABR.LegalEntity.IndividualName['type'],
+                legal_entity_name = soup.ABR.LegalEntity.IndividualName.GivenName.text + ' ' + soup.ABR.LegalEntity.IndividualName.FamilyName.text,
+                address_state = soup.ABR.LegalEntity.BusinessAddress.AddressDetails.State.text,
+                address_postcode = int(soup.ABR.LegalEntity.BusinessAddress.AddressDetails.Postcode.text)
+            )
+            session.add_all([legal_entity])
 
-    if soup.ABR.GST:
-        gst = postgres_table_creation.GST(
-            abn_id = int(soup.ABR.ABN.text),
-            status = soup.ABR.GST['status'],
-            status_from_date = datetime.strptime(soup.ABR.GST['GSTStatusFromDate'], '%Y%m%d').date()
-        )
+        if soup.ABR.ASICNumber:
+            asic_number = postgres_table_creation.ASICNumber(
+                abn_id = int(soup.ABR.ABN.text),
+                asic_number = soup.ABR.ASICNumber.text,
+                asic_type = soup.ABR.ASICNumber['ASICNumberType']
+            )
+            session.add_all([asic_number])
 
-    if soup.ABR.DGR:
-        dgr = postgres_table_creation.DGR(
-            abn_id = int(soup.ABR.ABN.text),
-        )
+        if soup.ABR.GST:
+            gst = postgres_table_creation.GST(
+                abn_id = int(soup.ABR.ABN.text),
+                status = soup.ABR.GST['status'],
+                status_from_date = datetime.strptime(soup.ABR.GST['GSTStatusFromDate'], '%Y%m%d').date()
+            )
+            session.add_all([gst])
 
+        if soup.ABR.DGR:
+            for dgr_entry in soup.find_all('DGR'):
+                dgr = postgres_table_creation.DGR(
+                    abn_id = int(soup.ABR.ABN.text),
+                    status_from_date = datetime.strptime(dgr_entry['DGRStatusFromDate'], '%Y%m%d').date(),
+                    name = dgr_entry.NonIndividualName.NonIndividualNameText.text
+                )
+                session.add_all([dgr])
 
+        if soup.ABR.OtherEntity:
+            for other_entity_entry in soup.find_all('OtherEntity'):
+                other_entity = postgres_table_creation.OtherEntity(
+                    abn_id = int(soup.ABR.ABN.text),
+                    other_entity_type = other_entity_entry.NonIndividualName['type'],
+                    other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
+                )
+                session.add_all([other_entity])
 
+        session.commit()  
+
+@op
+def process_files(directory: str) -> None:
+    """
+    Loops through all files in a directory and sends each line with an ABR XML element to the sample_function.
+
+    Args:
+        directory (str): The directory path to process.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+        print(file_path)
+
+        # Skip directories
+        if os.path.isdir(file_path):
+            continue
+
+        with open(file_path, 'r') as file:
+            for line in file:
+                # Parse each line as XML
+                try:
+                    root = ET.fromstring(line.strip())
+                except ET.ParseError:
+                    continue
+
+                # Check if the root element has an ABR element
+                if root.find('ABR') is None:
+                    continue
+
+                add_record_to_db(line.strip())
 
 if __name__ == '__main__':
     # URL of the website to scrape
@@ -156,11 +216,6 @@ if __name__ == '__main__':
     # Call the scrape_website function with the URL
     # download_files(scrape_abn_website(website_url))
 
-    sample_xml = [
-        r'''<ABR recordLastUpdatedDate="20150318" replaced="N"><ABN status="CAN" ABNStatusFromDate="20150202">11001825150</ABN><EntityType><EntityTypeInd>IND</EntityTypeInd><EntityTypeText>Individual/Sole Trader</EntityTypeText></EntityType><LegalEntity><IndividualName type="LGL"><GivenName>JOE</GivenName><FamilyName>VELARDI</FamilyName></IndividualName><BusinessAddress><AddressDetails><State>VIC</State><Postcode>3043</Postcode></AddressDetails></BusinessAddress></LegalEntity><GST status="NON" GSTStatusFromDate="19000101" /><OtherEntity><NonIndividualName type="TRD"><NonIndividualNameText>JVELARDI</NonIndividualNameText></NonIndividualName></OtherEntity></ABR>'''
-        , r'''<ABR recordLastUpdatedDate="20160726" replaced="N"><ABN status="ACT" ABNStatusFromDate="20000221">11001832391</ABN><EntityType><EntityTypeInd>PRV</EntityTypeInd><EntityTypeText>Australian Private Company</EntityTypeText></EntityType><MainEntity><NonIndividualName type="MN"><NonIndividualNameText>BERRY'S BAY FOODS PTY. LTD.</NonIndividualNameText></NonIndividualName><BusinessAddress><AddressDetails><State>NSW</State><Postcode>2000</Postcode></AddressDetails></BusinessAddress></MainEntity><ASICNumber ASICNumberType="undetermined">001832391</ASICNumber><GST status="CAN" GSTStatusFromDate="20160701" /><OtherEntity><NonIndividualName type="TRD"><NonIndividualNameText>BERRY'S BAY FOODS PTY LTD</NonIndividualNameText></NonIndividualName></OtherEntity></ABR>'''
-        , r'''<ABR recordLastUpdatedDate="20230504" replaced="N"><ABN status="ACT" ABNStatusFromDate="20000422">11001832828</ABN><EntityType><EntityTypeInd>PUB</EntityTypeInd><EntityTypeText>Australian Public Company</EntityTypeText></EntityType><MainEntity><NonIndividualName type="MN"><NonIndividualNameText>PACIFIC GROUP OF CHRISTIAN SCHOOLS LIMITED</NonIndividualNameText></NonIndividualName><BusinessAddress><AddressDetails><State>NSW</State><Postcode>2158</Postcode></AddressDetails></BusinessAddress></MainEntity><ASICNumber ASICNumberType="undetermined">001832828</ASICNumber><GST status="ACT" GSTStatusFromDate="20000701" /><DGR DGRStatusFromDate="20000701"><NonIndividualName type="DGR"><NonIndividualNameText>PACIFIC HILLS CHRISTIAN EDUCATION LTD BUILDING FUND</NonIndividualNameText></NonIndividualName></DGR><DGR DGRStatusFromDate="20000701"><NonIndividualName type="DGR"><NonIndividualNameText>PACIFIC HILLS CHRISTIAN EDUCATION LTD LIBRARY FUND</NonIndividualNameText></NonIndividualName></DGR><DGR DGRStatusFromDate="20070531"><NonIndividualName type="DGR"><NonIndividualNameText>PACIFIC HILLS SCHOLARSHIP FUND</NonIndividualNameText></NonIndividualName></DGR><OtherEntity><NonIndividualName type="TRD"><NonIndividualNameText>PACIFIC HILLS CHRISTIAN SCHOOL</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>GLOBAL CHRISTIAN SCHOOLS NETWORK</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>HANNAHS SCHOOL SUPPLIES</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>New Hope Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>OneMaker Academy</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Berowra Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Brook Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Coast Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Group of Christian Schools</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Gulgangali Jarjums Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PACIFIC HILLS</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PACIFIC HILLS CHRISTIAN SCHOOL</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Hope Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Online</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Online Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Valley Christian School</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacific Vision Foundation</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacifica Cafe</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Pacifica The Missions Cafe</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Southland College</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>THE CHRISTIAN EDUCATORS FORUM</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>THE EDUCATORS' FORUM</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>THE EXCELLENCE CENTRE</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Valley Hope Christian School</NonIndividualNameText></NonIndividualName></OtherEntity></ABR>'''
-    ]
+    process_files('./data')
 
-    add_record_to_db(sample_xml[2])
 
