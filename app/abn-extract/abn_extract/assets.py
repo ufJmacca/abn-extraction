@@ -9,6 +9,8 @@ from typing import List
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
+from psycopg2.errorcodes import UNIQUE_VIOLATION
+from psycopg2 import errors
 
 # Import postgres_table_creation to leverage classes
 import importlib.util
@@ -100,9 +102,14 @@ def download_files(file_urls: List[str]) -> None:
         else:
             print(f"Failed to download: {filename} (Status code: {response.status_code})")
 
+def element_handle(input):
+    try:
+        return input.text
+    except:
+        return ''
+
 def add_record_to_db(xml: str) -> None:
     soup = BeautifulSoup(xml, 'xml')
-    print(soup.ABR.OtherEntity)
 
     engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
 
@@ -123,17 +130,17 @@ def add_record_to_db(xml: str) -> None:
                 main_entity_type = soup.ABR.MainEntity.NonIndividualName['type'],
                 main_entity_name = soup.ABR.MainEntity.NonIndividualName.text,
                 address_state = soup.ABR.MainEntity.BusinessAddress.AddressDetails.State.text,
-                address_postcode = int(soup.ABR.MainEntity.BusinessAddress.AddressDetails.Postcode.text)
+                address_postcode = int(soup.ABR.MainEntity.BusinessAddress.AddressDetails.Postcode.text or '0')
             )
-        session.add_all([main_enity])
+            session.add_all([main_enity])
 
         if soup.ABR.LegalEntity:
             legal_entity = postgres_table_creation.LegalEntity(
                 abn_id = int(soup.ABR.ABN.text),
                 legal_entity_type = soup.ABR.LegalEntity.IndividualName['type'],
-                legal_entity_name = soup.ABR.LegalEntity.IndividualName.GivenName.text + ' ' + soup.ABR.LegalEntity.IndividualName.FamilyName.text,
+                legal_entity_name = element_handle(soup.ABR.LegalEntity.IndividualName.GivenName) + ' ' + soup.ABR.LegalEntity.IndividualName.FamilyName.text,
                 address_state = soup.ABR.LegalEntity.BusinessAddress.AddressDetails.State.text,
-                address_postcode = int(soup.ABR.LegalEntity.BusinessAddress.AddressDetails.Postcode.text)
+                address_postcode = int(soup.ABR.LegalEntity.BusinessAddress.AddressDetails.Postcode.text or '0')
             )
             session.add_all([legal_entity])
 
@@ -169,9 +176,33 @@ def add_record_to_db(xml: str) -> None:
                     other_entity_type = other_entity_entry.NonIndividualName['type'],
                     other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
                 )
+                if session.query(postgres_table_creation.OtherEntity).filter_by(
+                    abn_id = int(soup.ABR.ABN.text),
+                    other_entity_type = other_entity_entry.NonIndividualName['type'],
+                    other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
+                ).first():
+                    continue
                 session.add_all([other_entity])
 
-        session.commit()  
+        session.commit()
+
+def write_to_error_file(text1: str, text2: str) -> None:
+    """
+    Writes the given text1 and text2 to two new lines in the error.txt file.
+
+    Args:
+        text1 (str): The first text to write.
+        text2 (str): The second text to write.
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+    with open('error.txt', 'a') as file:
+        file.write(text1 + '\n')
+        file.write(text2 + '\n')
 
 @op
 def process_files(directory: str) -> None:
@@ -199,15 +230,22 @@ def process_files(directory: str) -> None:
             for line in file:
                 # Parse each line as XML
                 try:
-                    root = ET.fromstring(line.strip())
-                except ET.ParseError:
+                    root = BeautifulSoup(line.strip(), 'xml')
+                    # print(root)
+                except ET.ParseError as e:
+                    print(f'parse error - {e}')
                     continue
 
                 # Check if the root element has an ABR element
                 if root.find('ABR') is None:
+                    # print(f'ABR not found - {line.strip()}')
                     continue
+                
+                try:
+                    add_record_to_db(line.strip())
+                except Exception as e:
+                    write_to_error_file(root, f'Error message: {str(e)}')
 
-                add_record_to_db(line.strip())
 
 if __name__ == '__main__':
     # URL of the website to scrape
@@ -217,5 +255,7 @@ if __name__ == '__main__':
     # download_files(scrape_abn_website(website_url))
 
     process_files('./data')
+
+    # add_record_to_db('<ABR recordLastUpdatedDate="20210324" replaced="N"><ABN ABNStatusFromDate="20000507" status="ACT">11000013098</ABN><EntityType><EntityTypeInd>PRV</EntityTypeInd><EntityTypeText>Australian Private Company</EntityTypeText></EntityType><MainEntity><NonIndividualName type="MN"><NonIndividualNameText>SYDNEY NIGHT PATROL &amp; INQUIRY CO PTY LTD</NonIndividualNameText></NonIndividualName><BusinessAddress><AddressDetails><State>NSW</State><Postcode>2114</Postcode></AddressDetails></BusinessAddress></MainEntity><ASICNumber ASICNumberType="undetermined">000013098</ASICNumber><GST GSTStatusFromDate="20000701" status="ACT"/><OtherEntity><NonIndividualName type="TRD"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="OTN"><NonIndividualNameText>SECURITY NETWORK PROTECTION</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>BCD SECURITY ALARM MONITORING SERVICES</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Certis Security Australia</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>FORSTER-TUNCURRY SECURITY SERVICE</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PSI Corporate</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PSI Corporate Security</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>STREET BEAT SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Z.S.S SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity></ABR>')
 
 
