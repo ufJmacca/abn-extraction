@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 from io import BytesIO
 from bs4 import BeautifulSoup
 from dagster import op
-from typing import List
+from typing import List, Dict
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, insert
@@ -101,7 +101,17 @@ def download_files(file_urls: List[str]) -> None:
         else:
             print(f"Failed to download: {filename} (Status code: {response.status_code})")
 
-def element_handle(input):
+def element_handle(input: str) -> str:
+    """
+    Handles an input element, returning its text or an empty string if an exception occurs.
+
+    Args:
+        input: The input element to handle.
+
+    Returns:
+        str: The text value of the input element or an empty string.
+
+    """
     try:
         return input.text
     except:
@@ -116,10 +126,24 @@ def bulk_insert(
     dgr: List[dict],
     other_entity: List[dict]
 ) -> None:
+    """
+    Performs a bulk insert of data into the PostgreSQL database.
+
+    Args:
+        abn (List[dict]): List of dictionaries representing ABN records to insert.
+        main_entity (List[dict]): List of dictionaries representing MainEntity records to insert.
+        legal_entity (List[dict]): List of dictionaries representing LegalEntity records to insert.
+        asic_number (List[dict]): List of dictionaries representing ASICNumber records to insert.
+        gst (List[dict]): List of dictionaries representing GST records to insert.
+        dgr (List[dict]): List of dictionaries representing DGR records to insert.
+        other_entity (List[dict]): List of dictionaries representing OtherEntity records to insert.
+
+    Returns:
+        None
+
+    """
     engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
 
-    # print(main_entity)
-    
     with Session(engine) as session:
         session.execute(insert(postgres_table_creation.ABN), abn)
         session.execute(insert(postgres_table_creation.MainEntity), main_entity)
@@ -132,7 +156,19 @@ def bulk_insert(
 
 
 
-def add_record_to_db(xml: str) -> None:
+def generate_bulk_insert(xml: str) -> dict:
+    """
+    Generate a dictionary representation of provided XML record so it can be bulk insered
+
+    Args:
+        xml (str): The ABN XML data to process and add to the bulk insert.
+
+    Returns:
+        Dictionary of ABN record for bulk insert
+
+    Raises:
+        None
+    """
     soup = BeautifulSoup(xml, 'xml')
 
     return_dict = {}
@@ -241,7 +277,17 @@ def write_to_error_file(text1: str, text2: str) -> None:
         file.write(text1 + '\n')
         file.write(text2 + '\n')
 
-def remove_duplicates(dictionaries):
+def remove_duplicates(dictionaries: List[Dict]) -> List[Dict]:
+    """
+    Removes duplicates from a list of dictionaries based on the values.
+
+    Args:
+        dictionaries (List[Dict]): A list of dictionaries.
+
+    Returns:
+        List[Dict]: A new list of dictionaries with duplicates removed.
+
+    """
     unique_dictionaries = set(tuple(sorted(d.items())) for d in dictionaries if any(d.values()))
     return [dict(items) for items in unique_dictionaries]
 
@@ -294,7 +340,7 @@ def process_files(directory: str) -> None:
 
                 
                 
-                for key, value in add_record_to_db(line.strip()).items():
+                for key, value in generate_bulk_insert(line.strip()).items():
                     # print(f'add record key - {key} value - {value}')
                     if key in records.keys():
                         for val in value:
