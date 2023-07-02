@@ -8,7 +8,7 @@ from dagster import op
 from typing import List
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, insert
 from psycopg2.errorcodes import UNIQUE_VIOLATION
 from psycopg2 import errors
 
@@ -19,7 +19,6 @@ module_name = 'postgres_table_creation'
 spec = importlib.util.spec_from_file_location(module_name, module_path)
 postgres_table_creation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(postgres_table_creation)
-postgres_table_creation.ABN()
 
 @op
 def scrape_abn_website(url: str) -> List[str]:
@@ -107,34 +106,68 @@ def element_handle(input):
         return input.text
     except:
         return ''
+    
+def bulk_insert(
+    abn: List[dict],
+    main_entity: List[dict],
+    legal_entity: List[dict],
+    asic_number: List[dict],
+    gst: List[dict],
+    dgr: List[dict],
+    other_entity: List[dict]
+) -> None:
+    engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
+
+    # print(main_entity)
+    
+    with Session(engine) as session:
+        session.execute(insert(postgres_table_creation.ABN), abn)
+        session.execute(insert(postgres_table_creation.MainEntity), main_entity)
+        session.execute(insert(postgres_table_creation.LegalEntity), legal_entity)
+        session.execute(insert(postgres_table_creation.ASICNumber), asic_number)
+        session.execute(insert(postgres_table_creation.GST), gst)
+        session.execute(insert(postgres_table_creation.DGR), dgr)
+        session.execute(insert(postgres_table_creation.OtherEntity), other_entity)
+        session.commit()
+
+
 
 def add_record_to_db(xml: str) -> None:
     soup = BeautifulSoup(xml, 'xml')
 
-    engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
+    return_dict = {}
 
-    with Session(engine) as session:
+    abn = postgres_table_creation.ABN(
+        abn = int(soup.ABR.ABN.text),
+        abn_status = soup.ABR.ABN['status'],
+        abn_status_from_date = datetime.strptime(soup.ABR.ABN['ABNStatusFromDate'], '%Y%m%d').date(),
+        entity_type_indicator = soup.ABR.EntityType.EntityTypeInd.text,
+        entity_type_text = soup.ABR.EntityType.EntityTypeText.text
+    )
 
-        abn = postgres_table_creation.ABN(
-            abn = int(soup.ABR.ABN.text),
-            abn_status = soup.ABR.ABN['status'],
-            abn_status_from_date = datetime.strptime(soup.ABR.ABN['ABNStatusFromDate'], '%Y%m%d').date(),
-            entity_type_indicator = soup.ABR.EntityType.EntityTypeInd.text,
-            entity_type_text = soup.ABR.EntityType.EntityTypeText.text
-        )
-        session.add_all([abn])
+    return_dict['abn'] = [abn]
 
-        if soup.ABR.MainEntity:
-            main_enity = postgres_table_creation.MainEntity(
+    if soup.ABR.MainEntity:
+        try:
+            main_entity = postgres_table_creation.MainEntity(
                 abn_id = int(soup.ABR.ABN.text),
                 main_entity_type = soup.ABR.MainEntity.NonIndividualName['type'],
                 main_entity_name = soup.ABR.MainEntity.NonIndividualName.text,
                 address_state = soup.ABR.MainEntity.BusinessAddress.AddressDetails.State.text,
                 address_postcode = int(soup.ABR.MainEntity.BusinessAddress.AddressDetails.Postcode.text or '0')
             )
-            session.add_all([main_enity])
+        except ValueError:
+            main_entity = postgres_table_creation.MainEntity(
+                abn_id = int(soup.ABR.ABN.text),
+                main_entity_type = soup.ABR.MainEntity.NonIndividualName['type'],
+                main_entity_name = soup.ABR.MainEntity.NonIndividualName.text,
+                address_state = soup.ABR.MainEntity.BusinessAddress.AddressDetails.State.text,
+                address_postcode = int('0')
+            )
+        return_dict['main_entity'] = [main_entity]
 
-        if soup.ABR.LegalEntity:
+    if soup.ABR.LegalEntity:
+        try:
             legal_entity = postgres_table_creation.LegalEntity(
                 abn_id = int(soup.ABR.ABN.text),
                 legal_entity_type = soup.ABR.LegalEntity.IndividualName['type'],
@@ -142,49 +175,53 @@ def add_record_to_db(xml: str) -> None:
                 address_state = soup.ABR.LegalEntity.BusinessAddress.AddressDetails.State.text,
                 address_postcode = int(soup.ABR.LegalEntity.BusinessAddress.AddressDetails.Postcode.text or '0')
             )
-            session.add_all([legal_entity])
-
-        if soup.ABR.ASICNumber:
-            asic_number = postgres_table_creation.ASICNumber(
+        except ValueError:
+            legal_entity = postgres_table_creation.LegalEntity(
                 abn_id = int(soup.ABR.ABN.text),
-                asic_number = soup.ABR.ASICNumber.text,
-                asic_type = soup.ABR.ASICNumber['ASICNumberType']
+                legal_entity_type = soup.ABR.LegalEntity.IndividualName['type'],
+                legal_entity_name = element_handle(soup.ABR.LegalEntity.IndividualName.GivenName) + ' ' + soup.ABR.LegalEntity.IndividualName.FamilyName.text,
+                address_state = soup.ABR.LegalEntity.BusinessAddress.AddressDetails.State.text,
+                address_postcode = int('0')
             )
-            session.add_all([asic_number])
+        return_dict['legal_entity'] = [legal_entity]
 
-        if soup.ABR.GST:
-            gst = postgres_table_creation.GST(
-                abn_id = int(soup.ABR.ABN.text),
-                status = soup.ABR.GST['status'],
-                status_from_date = datetime.strptime(soup.ABR.GST['GSTStatusFromDate'], '%Y%m%d').date()
-            )
-            session.add_all([gst])
+    if soup.ABR.ASICNumber:
+        asic_number = postgres_table_creation.ASICNumber(
+            abn_id = int(soup.ABR.ABN.text),
+            asic_number = soup.ABR.ASICNumber.text,
+            asic_type = soup.ABR.ASICNumber['ASICNumberType']
+        )
+        return_dict['asic_number'] = [asic_number]
 
-        if soup.ABR.DGR:
-            for dgr_entry in soup.find_all('DGR'):
-                dgr = postgres_table_creation.DGR(
+    if soup.ABR.GST:
+        gst = postgres_table_creation.GST(
+            abn_id = int(soup.ABR.ABN.text),
+            status = soup.ABR.GST['status'],
+            status_from_date = datetime.strptime(soup.ABR.GST['GSTStatusFromDate'], '%Y%m%d').date()
+        )
+        return_dict['gst'] = [gst]
+
+    if soup.ABR.DGR:
+        return_dict['dgr'] = []
+        for dgr_entry in soup.find_all('DGR'):
+            return_dict['dgr'].append(postgres_table_creation.DGR(
                     abn_id = int(soup.ABR.ABN.text),
                     status_from_date = datetime.strptime(dgr_entry['DGRStatusFromDate'], '%Y%m%d').date(),
                     name = dgr_entry.NonIndividualName.NonIndividualNameText.text
                 )
-                session.add_all([dgr])
+            )
 
-        if soup.ABR.OtherEntity:
-            for other_entity_entry in soup.find_all('OtherEntity'):
-                other_entity = postgres_table_creation.OtherEntity(
-                    abn_id = int(soup.ABR.ABN.text),
-                    other_entity_type = other_entity_entry.NonIndividualName['type'],
-                    other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
-                )
-                if session.query(postgres_table_creation.OtherEntity).filter_by(
-                    abn_id = int(soup.ABR.ABN.text),
-                    other_entity_type = other_entity_entry.NonIndividualName['type'],
-                    other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
-                ).first():
-                    continue
-                session.add_all([other_entity])
+    if soup.ABR.OtherEntity:
+        return_dict['other_entity'] = []
+        for other_entity_entry in soup.find_all('OtherEntity'):
+            return_dict['other_entity'].append(postgres_table_creation.OtherEntity(
+                abn_id = int(soup.ABR.ABN.text),
+                other_entity_type = other_entity_entry.NonIndividualName['type'],
+                other_entity_name = other_entity_entry.NonIndividualName.NonIndividualNameText.text
+            ))
 
-        session.commit()
+    return  return_dict
+
 
 def write_to_error_file(text1: str, text2: str) -> None:
     """
@@ -203,6 +240,10 @@ def write_to_error_file(text1: str, text2: str) -> None:
     with open('error.txt', 'a') as file:
         file.write(text1 + '\n')
         file.write(text2 + '\n')
+
+def remove_duplicates(dictionaries):
+    unique_dictionaries = set(tuple(sorted(d.items())) for d in dictionaries if any(d.values()))
+    return [dict(items) for items in unique_dictionaries]
 
 @op
 def process_files(directory: str) -> None:
@@ -227,6 +268,16 @@ def process_files(directory: str) -> None:
             continue
 
         with open(file_path, 'r') as file:
+            records = {
+                    'abn': [],
+                    'main_entity': [],
+                    'legal_entity': [],
+                    'asic_number': [],
+                    'gst': [],
+                    'dgr': [],
+                    'other_entity': []
+                }
+
             for line in file:
                 # Parse each line as XML
                 try:
@@ -240,11 +291,29 @@ def process_files(directory: str) -> None:
                 if root.find('ABR') is None:
                     # print(f'ABR not found - {line.strip()}')
                     continue
+
                 
-                try:
-                    add_record_to_db(line.strip())
-                except Exception as e:
-                    write_to_error_file(root, f'Error message: {str(e)}')
+                
+                for key, value in add_record_to_db(line.strip()).items():
+                    # print(f'add record key - {key} value - {value}')
+                    if key in records.keys():
+                        for val in value:
+                            
+                            # print(f'val in value - {val.__dict__}')
+                            records[key].append({k1: v1 for k1, v1 in val.__dict__.items() if not k1.startswith('_')})
+                            # print(f'records - {records}')
+
+            # print(records['main_entity'])
+            bulk_insert(
+                abn = records['abn'],
+                main_entity = records['main_entity'],
+                legal_entity = records['legal_entity'],
+                asic_number = records['asic_number'],
+                gst = records['gst'],
+                dgr = remove_duplicates(records['dgr']),
+                other_entity = remove_duplicates(records['other_entity'])
+            )
+
 
 
 if __name__ == '__main__':

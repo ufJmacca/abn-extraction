@@ -67,7 +67,7 @@ class DGR(Base):
     __tablename__ = 'dgr'
 
     abn_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("abn.abn"), primary_key=True)
-    status_from_date: Mapped[Date] = mapped_column(Date)
+    status_from_date: Mapped[Date] = mapped_column(Date, primary_key=True)
     name: Mapped[str] = mapped_column(String, primary_key=True)
 
     abn: Mapped["ABN"] = relationship(back_populates="dgr")
