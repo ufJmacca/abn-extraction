@@ -4,11 +4,11 @@ import zipfile
 import xml.etree.ElementTree as ET
 from io import BytesIO
 from bs4 import BeautifulSoup
-from dagster import op
+from dagster import op, job
 from typing import List, Dict
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, insert
+from sqlalchemy import create_engine, insert, delete
 from psycopg2.errorcodes import UNIQUE_VIOLATION
 from psycopg2 import errors
 
@@ -51,7 +51,7 @@ def scrape_abn_website(url: str) -> List[str]:
         print(f"Failed to retrieve website content. Status code: {response.status_code}")
 
 @op
-def download_files(file_urls: List[str]) -> None:
+def download_files(file_urls: List[str]) -> str:
     """
     Downloads a list of zipped files, extracts them in memory, and writes the contents to the data directory.
 
@@ -59,7 +59,7 @@ def download_files(file_urls: List[str]) -> None:
         file_urls (List[str]): List of URLs of the zipped files to download.
 
     Returns:
-        None
+        string of data directory
 
     Raises:
         None
@@ -100,6 +100,32 @@ def download_files(file_urls: List[str]) -> None:
                     print(f"Extracted: {file_info.filename} from {filename}")
         else:
             print(f"Failed to download: {filename} (Status code: {response.status_code})")
+
+    return './data'
+
+@op
+def delete_records() -> None:
+    """
+    Deletes records from tables
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    """
+    engine = create_engine('postgresql://postgres:example_password@abn-db-1/abn')
+
+    with Session(engine) as session:
+        session.execute(delete(postgres_table_creation.MainEntity))
+        session.execute(delete(postgres_table_creation.LegalEntity))
+        session.execute(delete(postgres_table_creation.ASICNumber))
+        session.execute(delete(postgres_table_creation.GST))
+        session.execute(delete(postgres_table_creation.DGR))
+        session.execute(delete(postgres_table_creation.OtherEntity))
+        session.execute(delete(postgres_table_creation.ABN))
+        session.commit()
 
 def element_handle(input: str) -> str:
     """
@@ -153,8 +179,6 @@ def bulk_insert(
         session.execute(insert(postgres_table_creation.DGR), dgr)
         session.execute(insert(postgres_table_creation.OtherEntity), other_entity)
         session.commit()
-
-
 
 def generate_bulk_insert(xml: str) -> dict:
     """
@@ -258,7 +282,6 @@ def generate_bulk_insert(xml: str) -> dict:
 
     return  return_dict
 
-
 def write_to_error_file(text1: str, text2: str) -> None:
     """
     Writes the given text1 and text2 to two new lines in the error.txt file.
@@ -328,28 +351,22 @@ def process_files(directory: str) -> None:
                 # Parse each line as XML
                 try:
                     root = BeautifulSoup(line.strip(), 'xml')
-                    # print(root)
                 except ET.ParseError as e:
                     print(f'parse error - {e}')
                     continue
 
                 # Check if the root element has an ABR element
                 if root.find('ABR') is None:
-                    # print(f'ABR not found - {line.strip()}')
                     continue
-
                 
-                
+                # Iterate over the generated key-value pairs for bulk insert.
                 for key, value in generate_bulk_insert(line.strip()).items():
-                    # print(f'add record key - {key} value - {value}')
+                    # Check if the key exists in the records dictionary.
                     if key in records.keys():
+                        # Iterate over the values and convert them into dictionaries, excluding private attributes.
                         for val in value:
-                            
-                            # print(f'val in value - {val.__dict__}')
                             records[key].append({k1: v1 for k1, v1 in val.__dict__.items() if not k1.startswith('_')})
-                            # print(f'records - {records}')
 
-            # print(records['main_entity'])
             bulk_insert(
                 abn = records['abn'],
                 main_entity = records['main_entity'],
@@ -360,17 +377,30 @@ def process_files(directory: str) -> None:
                 other_entity = remove_duplicates(records['other_entity'])
             )
 
+        os.remove(file_path)
+
+@op
+def return_url() -> str:
+    """
+    returns abn-bulk-extract url to parse and download file from
+
+    Args:
+        None
+
+    Returns:
+        url (str): URL to download files from
+
+    Raises:
+        None
+    """
+    return 'https://data.gov.au/data/dataset/abn-bulk-extract'
+
+@job
+def extract_and_load() -> None:
+    delete_records()
+
+    process_files(directory= download_files(file_urls = scrape_abn_website(url = return_url())))
 
 
 if __name__ == '__main__':
-    # URL of the website to scrape
-    website_url = 'https://data.gov.au/data/dataset/abn-bulk-extract'
-
-    # Call the scrape_website function with the URL
-    # download_files(scrape_abn_website(website_url))
-
-    process_files('./data')
-
-    # add_record_to_db('<ABR recordLastUpdatedDate="20210324" replaced="N"><ABN ABNStatusFromDate="20000507" status="ACT">11000013098</ABN><EntityType><EntityTypeInd>PRV</EntityTypeInd><EntityTypeText>Australian Private Company</EntityTypeText></EntityType><MainEntity><NonIndividualName type="MN"><NonIndividualNameText>SYDNEY NIGHT PATROL &amp; INQUIRY CO PTY LTD</NonIndividualNameText></NonIndividualName><BusinessAddress><AddressDetails><State>NSW</State><Postcode>2114</Postcode></AddressDetails></BusinessAddress></MainEntity><ASICNumber ASICNumberType="undetermined">000013098</ASICNumber><GST GSTStatusFromDate="20000701" status="ACT"/><OtherEntity><NonIndividualName type="TRD"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="OTN"><NonIndividualNameText>SECURITY NETWORK PROTECTION</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>BCD SECURITY ALARM MONITORING SERVICES</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Certis Security Australia</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>FORSTER-TUNCURRY SECURITY SERVICE</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PSI Corporate</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>PSI Corporate Security</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>SNP SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>STREET BEAT SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity><OtherEntity><NonIndividualName type="BN"><NonIndividualNameText>Z.S.S SECURITY</NonIndividualNameText></NonIndividualName></OtherEntity></ABR>')
-
-
+    extract_and_load() 
