@@ -202,7 +202,8 @@ def generate_bulk_insert(xml: str) -> dict:
         abn_status = soup.ABR.ABN['status'],
         abn_status_from_date = datetime.strptime(soup.ABR.ABN['ABNStatusFromDate'], '%Y%m%d').date(),
         entity_type_indicator = soup.ABR.EntityType.EntityTypeInd.text,
-        entity_type_text = soup.ABR.EntityType.EntityTypeText.text
+        entity_type_text = soup.ABR.EntityType.EntityTypeText.text,
+        last_update_date = datetime.strptime(soup.ABR['recordLastUpdatedDate'], '%Y%m%d').date()
     )
 
     return_dict['abn'] = [abn]

@@ -15,6 +15,8 @@ class ABN(Base):
     entity_type_indicator: Mapped[str] = mapped_column(String(3))
     entity_type_text: Mapped[str] = mapped_column(String)
 
+    last_update_date: Mapped[Date] = mapped_column(Date)
+
     main_entity: Mapped[Optional["MainEntity"]] = relationship(back_populates="abn", cascade="all, delete-orphan")
     legal_entity: Mapped[Optional["LegalEntity"]] = relationship(back_populates="abn", cascade="all, delete-orphan")
 
